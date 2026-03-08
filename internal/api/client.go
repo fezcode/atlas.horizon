@@ -92,3 +92,39 @@ func GetWeatherIcon(code int, isDay bool) string {
 	default: return "❓"
 	}
 }
+
+func Geocode(query string) (*Location, error) {
+	url := fmt.Sprintf("https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=en&format=json", query)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Results []struct {
+			Name      string  `json:"name"`
+			Country   string  `json:"country"`
+			Latitude  float64 `json:"latitude"`
+			Longitude float64 `json:"longitude"`
+			Timezone  string  `json:"timezone"`
+		} `json:"results"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	if len(result.Results) == 0 {
+		return nil, fmt.Errorf("location not found")
+	}
+
+	r := result.Results[0]
+	return &Location{
+		City:     r.Name,
+		Country:  r.Country,
+		Lat:      r.Latitude,
+		Lon:      r.Longitude,
+		Timezone: r.Timezone,
+	}, nil
+}

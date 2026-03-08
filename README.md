@@ -9,15 +9,16 @@
 
 ## 🔧 Features
 - **Real-time Weather:** Powered by Open-Meteo for high accuracy.
+- **Location Search:** Press 's' to search for any city in the world and scan its atmospheric data.
 - **Rad-Meter (UV Index):** Tracks UV exposure with a "caution" threshold.
 - **Wind Radar:** Aesthetic ASCII wind direction and speed monitoring.
-- **Location Auto-Detection:** Automatically finds your coordinates via IP.
+- **Location Auto-Detection:** Automatically finds your coordinates via IP on startup.
 - **Retro-Future TUI:** Polished Onyx & Gold aesthetic with animations.
 
 ## 🚀 Installation
 Ensure you have the [Atlas Hub](https://github.com/fezcode/atlas.hub) installed, then:
 ```bash
-atlas.hub install atlas.horizon
+atlas.hub
 ```
 
 Or build from source:
@@ -26,9 +27,11 @@ gobake build
 ```
 
 ## ⌨️ Controls
-- **'r':** Refresh data manually.
-- **'q':** Exit dashboard.
+- **'s':** Search for a new location.
+- **'r':** Refresh data for current location.
 - **'h':** Toggle detailed atmospheric stats.
+- **'q':** Exit dashboard.
+
 
 ---
 Built with ❤️ by [fezcode](https://github.com/fezcode)

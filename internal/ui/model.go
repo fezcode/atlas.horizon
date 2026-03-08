@@ -2,10 +2,12 @@ package ui
 
 import (
 	"fmt"
+	"net/url"
 	"time"
 
 	"atlas.horizon/internal/api"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -21,56 +23,57 @@ type Model struct {
 	ShowDetails bool
 	Quitting    bool
 	LastRefresh time.Time
+	
+	// Search
+	SearchMode  bool
+	SearchInput textinput.Model
 }
-
-type (
-	LocMsg   *api.Location
-	WeatherMsg *api.WeatherData
-	ErrMsg   error
-)
 
 func NewModel() Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(Gold)
 	
+	ti := textinput.New()
+	ti.Placeholder = "Enter city name..."
+	ti.Focus()
+	ti.CharLimit = 156
+	ti.Width = 30
+	ti.Prompt = lipgloss.NewStyle().Foreground(Gold).Render("❯ ")
+
 	return Model{
-		Loading: true,
-		Spinner: s,
+		Loading:     true,
+		Spinner:     s,
+		SearchInput: ti,
 	}
 }
+
+type ErrMsg error
 
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.Spinner.Tick,
-		m.GetInitialData(),
+		FetchData(""),
 	)
 }
 
-func (m Model) GetInitialData() tea.Cmd {
-	return func() tea.Msg {
-		loc, err := api.GetLocation()
-		if err != nil {
-			return ErrMsg(err)
-		}
-		
-		weather, err := api.GetWeather(loc.Lat, loc.Lon, loc.Timezone)
-		if err != nil {
-			return ErrMsg(err)
-		}
-		
-		m.Location = loc // This won't work in a pure function but we return both
-		return tea.Batch(
-			func() tea.Msg { return LocMsg(loc) },
-			func() tea.Msg { return WeatherMsg(weather) },
-		)()
-	}
+// DataBundle is the msg returned when fetching is complete
+type DataBundle struct {
+	Loc *api.Location
+	W   *api.WeatherData
 }
 
-// Improved Data Fetcher
-func FetchData() tea.Cmd {
+func FetchData(query string) tea.Cmd {
 	return func() tea.Msg {
-		loc, err := api.GetLocation()
+		var loc *api.Location
+		var err error
+		
+		if query != "" {
+			loc, err = api.Geocode(url.QueryEscape(query))
+		} else {
+			loc, err = api.GetLocation()
+		}
+
 		if err != nil {
 			return ErrMsg(err)
 		}
@@ -84,12 +87,29 @@ func FetchData() tea.Cmd {
 	}
 }
 
-type DataBundle struct {
-	Loc *api.Location
-	W   *api.WeatherData
-}
-
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.SearchMode {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "esc":
+				m.SearchMode = false
+				return m, nil
+			case "enter":
+				query := m.SearchInput.Value()
+				if query != "" {
+					m.SearchMode = false
+					m.Loading = true
+					m.SearchInput.Reset()
+					return m, tea.Batch(m.Spinner.Tick, FetchData(query))
+				}
+			}
+		}
+		var cmd tea.Cmd
+		m.SearchInput, cmd = m.SearchInput.Update(msg)
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -98,9 +118,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "r":
 			m.Loading = true
-			return m, tea.Batch(m.Spinner.Tick, FetchData())
+			return m, tea.Batch(m.Spinner.Tick, FetchData(""))
 		case "h":
 			m.ShowDetails = !m.ShowDetails
+			return m, nil
+		case "s":
+			m.SearchMode = true
+			m.SearchInput.Focus()
+			return m, nil
 		}
 
 	case tea.WindowSizeMsg:
@@ -112,6 +137,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Weather = msg.W
 		m.Loading = false
 		m.LastRefresh = time.Now()
+		m.Err = nil
 		return m, nil
 
 	case ErrMsg:
@@ -133,8 +159,18 @@ func (m Model) View() string {
 		return ""
 	}
 
+	if m.SearchMode {
+		content := lipgloss.JoinVertical(lipgloss.Left,
+			TitleStyle.Render(" LOCATION SEARCH "),
+			"\nEnter the name of the coordinates you wish to scan:",
+			m.SearchInput.View(),
+			HelpStyle.Render("\nenter: confirm • esc: cancel"),
+		)
+		return AppStyle.Render(content)
+	}
+
 	if m.Err != nil {
-		return AppStyle.Render(fmt.Sprintf("❌ Error: %v\n\nPress 'q' to quit.", m.Err))
+		return AppStyle.Render(fmt.Sprintf("❌ Error: %v\n\nPress 'r' to retry or 'q' to quit.", m.Err))
 	}
 
 	if m.Loading {
@@ -142,7 +178,7 @@ func (m Model) View() string {
 	}
 
 	// Main Layout
-	title := fmt.Sprintf(" HORIZON-OS v0.1.0 | %s, %s ", m.Location.City, m.Location.Country)
+	title := fmt.Sprintf(" ATLAS HORIZON v0.1.0 | %s, %s ", m.Location.City, m.Location.Country)
 	
 	// Current Weather Box
 	curr := m.Weather.Current
@@ -193,22 +229,26 @@ func (m Model) View() string {
 		lipgloss.NewStyle().MarginLeft(2).Render(DrawBox("RADIATION MONITOR", radContent, 30)),
 	)
 
-	row2 := lipgloss.NewStyle().MarginTop(1).Render(
-		lipgloss.JoinHorizontal(lipgloss.Top,
-			DrawBox("WIND RADAR", windContent, 30),
-			lipgloss.NewStyle().MarginLeft(2).Render(m.drawForecastBox()),
-		),
-	)
+	content := row1
+	if m.ShowDetails {
+		row2 := lipgloss.NewStyle().MarginTop(1).Render(
+			lipgloss.JoinHorizontal(lipgloss.Top,
+				DrawBox("WIND RADAR", windContent, 30),
+				lipgloss.NewStyle().MarginLeft(2).Render(m.drawForecastBox()),
+			),
+		)
+		content = lipgloss.JoinVertical(lipgloss.Left, row1, row2)
+	}
 
 	s := lipgloss.JoinVertical(lipgloss.Left,
 		TitleStyle.Render(title),
-		row1,
-		row2,
-		HelpStyle.Render("r: refresh • h: toggle stats • q: quit"),
+		content,
+		HelpStyle.Render("\nr: refresh • s: search • h: toggle stats • q: quit"),
 	)
 
 	return AppStyle.Render(s)
 }
+
 
 func (m Model) drawRadBar(uv float64) string {
 	width := 24
